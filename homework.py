@@ -1,15 +1,20 @@
 import logging
-import os
 import sys
 import time
 from http import HTTPStatus
 
+from exceptions import HttpStatusNotOK, EmptyAnswer
 import requests
 import telegram
-from dotenv import load_dotenv
+from constants import (
+    PRACTICUM_TOKEN, TELEGRAM_TOKEN,
+    TELEGRAM_CHAT_ID, RETRY_TIME,
+    ENDPOINT, HEADERS
+)
 
-load_dotenv()
 
+# Логгер получется перенести в main и программа работает,
+# но валятся тесты pytest
 formatter = logging.Formatter(
     '%(asctime)s - %(levelname)s - %(message)s'
 )
@@ -19,38 +24,29 @@ handler = logging.StreamHandler(sys.stdout)
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
-PRACTICUM_TOKEN = os.getenv('PRACTICUM_TOKEN')
-TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
-TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
-
-RETRY_TIME = 600
-ENDPOINT = 'https://practicum.yandex.ru/api/user_api/homework_statuses/'
-HEADERS = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
-
-
 HOMEWORK_STATUSES = {
     'approved': 'Работа проверена: ревьюеру всё понравилось. Ура!',
     'reviewing': 'Работа взята на проверку ревьюером.',
     'rejected': 'Работа проверена: у ревьюера есть замечания.'
 }
 
-prev_report = ''
+# prev_report = ''
 
 
 def send_message(bot, message):
     """Отправляет сообщение в Telegram чат."""
-    global prev_report
-    if prev_report != message:
-        try:
-            bot.send_message(
-                chat_id=TELEGRAM_CHAT_ID,
-                text=message
-            )
-        except telegram.error.BadRequest as error:
-            logger.error(f'Cбой при отправке сообщения в Telegram: {error}')
-        else:
-            prev_report = message
-    return prev_report
+    # global prev_report
+    # if prev_report != message:
+    try:
+        bot.send_message(
+            chat_id=TELEGRAM_CHAT_ID,
+            text=message
+        )
+    except telegram.error.TelegramError as error:
+        logger.error(f'Cбой при отправке сообщения в Telegram: {error}')
+        # else:
+        #     prev_report = message
+    # return prev_report
 
 
 def get_api_answer(current_timestamp):
@@ -60,33 +56,26 @@ def get_api_answer(current_timestamp):
     response = requests.get(ENDPOINT, headers=HEADERS, params=params)
     if response.status_code != HTTPStatus.OK:
         message = (
-            f'Сбой в работе программы: Эндпоинт '
-            f'https://practicum.yandex.ru/api/user_api/homework_statuses/111'
+            f'Сбой в работе программы: Эндпоинт {response.url}'
             f'недоступен. Код ответа API: {response.status_code}'
         )
         logger.error(message)
-        raise Exception(f'Код ответа API: {response.status_code}')
-    else:
-        return response.json()
+        raise HttpStatusNotOK(f'Код ответа API: {response.status_code}')
+    return response.json()
 
 
 def check_response(response):
     """Проверяет ответ API на корректность."""
-    if type(response['homeworks']) is not list:
+    if not isinstance(response['homeworks'], list):
         message = 'Отсутствие ожидаемого типа данных в ответе API'
         logger.error(message)
         raise TypeError('Отсутствие ожидаемого типа данных в ответе API')
-    elif 'homeworks' not in response:
-        message = 'Отсутствие ожидаемого ключа homeworks в ответе API'
+    elif not response:
+        message = 'Отсутствие ожидаемого ключа в ответе API'
         logger.error(message)
-        raise KeyError('Отсутствие ожидаемых ключей в ответе API')
-    elif 'current_date' not in response:
-        message = 'Отсутствие ожидаемого ключа current_date в ответе API'
-        logger.error(message)
-        raise KeyError('Отсутствие ожидаемых ключей в ответе API')
-    else:
-        logger.info('Ответ API корректен')
-        return response.get('homeworks')
+        raise EmptyAnswer('Отсутствие ожидаемых ключей в ответе API')
+    logger.info('Ответ API корректен')
+    return response.get('homeworks')
 
 
 def parse_status(homework):
@@ -103,6 +92,7 @@ def parse_status(homework):
         )
         logger.error(message)
         raise KeyError(f'Неизвестный статус работы {homework_status}')
+# При использовании ValueError вместо KeyError валится тест
 
 
 def check_tokens():
@@ -114,6 +104,7 @@ def main():
     """Основная логика работы бота."""
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
     current_timestamp = int(time.time())
+    prev_report = ''
     while True:
         try:
             if not check_tokens():
@@ -122,8 +113,10 @@ def main():
                     'Программа принудительно остановлена.'
                 )
                 logger.critical(message)
-                send_message(bot, message)
-                raise SystemExit()
+                if prev_report != message:
+                    send_message(bot, message)
+                    prev_report = message
+                sys.exit()
             response = get_api_answer(current_timestamp)
             try:
                 homework = check_response(response)[0]
@@ -131,19 +124,21 @@ def main():
                 logger.debug('Статус задания не обновлён.')
             else:
                 message = parse_status(homework)
-                send_message(bot, message)
+                if prev_report != message:
+                    send_message(bot, message)
+                    prev_report = message
                 logger.info(f'Бот отправил сообщение {message}')
                 current_timestamp = response.get('current_date')
-            finally:
-                time.sleep(RETRY_TIME)
-
         except Exception as error:
             message = f'Сбой в работе программы: {error}'
             logger.error(message)
-            send_message(bot, message)
-            time.sleep(RETRY_TIME)
+            if prev_report != message:
+                send_message(bot, message)
+                prev_report = message
         else:
             logger.info('Программа работает без ошибок')
+        finally:
+            time.sleep(RETRY_TIME)
 
 
 if __name__ == '__main__':
