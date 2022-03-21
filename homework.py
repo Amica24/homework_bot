@@ -14,6 +14,15 @@ from constants import (
 )
 from exceptions import HttpStatusNotOK, EmptyAnswer
 
+formatter = logging.Formatter(
+    '%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+handler = logging.StreamHandler(sys.stdout)
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+
 
 def send_message(bot, message):
     """Отправляет сообщение в Telegram чат."""
@@ -23,7 +32,7 @@ def send_message(bot, message):
             text=message
         )
     except telegram.error.TelegramError as error:
-        logging.error(f'Cбой при отправке сообщения в Telegram: {error}')
+        logger.error(f'Cбой при отправке сообщения в Telegram: {error}')
 
 
 def get_api_answer(current_timestamp):
@@ -36,7 +45,7 @@ def get_api_answer(current_timestamp):
             f'Сбой в работе программы: Эндпоинт {response.url}'
             f'недоступен. Код ответа API: {response.status_code}'
         )
-        logging.error(message)
+        logger.error(message)
         raise HttpStatusNotOK(f'Код ответа API: {response.status_code}')
     return response.json()
 
@@ -45,13 +54,13 @@ def check_response(response):
     """Проверяет ответ API на корректность."""
     if not isinstance(response['homeworks'], list):
         message = 'Отсутствие ожидаемого типа данных в ответе API'
-        logging.error(message)
+        logger.error(message)
         raise TypeError('Отсутствие ожидаемого типа данных в ответе API')
     elif not response:
         message = 'Отсутствие ожидаемого ключа в ответе API'
-        logging.error(message)
+        logger.error(message)
         raise EmptyAnswer('Отсутствие ожидаемых ключей в ответе API')
-    logging.info('Ответ API корректен')
+    logger.info('Ответ API корректен')
     return response.get('homeworks')
 
 
@@ -66,7 +75,7 @@ def parse_status(homework):
         f'Недокументированный статус домашней работы {homework_status},'
         f'обнаруженный в ответе API'
     )
-    logging.error(message)
+    logger.error(message)
     raise KeyError(f'Неизвестный статус работы {homework_status}')
 
 
@@ -87,7 +96,7 @@ def main():
                     'Отсутствие обязательных переменных окружения.'
                     'Программа принудительно остановлена.'
                 )
-                logging.critical(message)
+                logger.critical(message)
                 if prev_report != message:
                     send_message(bot, message)
                     prev_report = message
@@ -96,17 +105,17 @@ def main():
             try:
                 homework = check_response(response)[0]
             except IndexError:
-                logging.debug('Статус задания не обновлён.')
+                logger.debug('Статус задания не обновлён.')
             else:
                 message = parse_status(homework)
                 if prev_report != message:
                     send_message(bot, message)
                     prev_report = message
-                logging.info(f'Бот отправил сообщение {message}')
+                logger.info(f'Бот отправил сообщение {message}')
                 current_timestamp = response.get('current_date')
         except Exception as error:
             message = f'Сбой в работе программы: {error}'
-            logging.error(message)
+            logger.error(message)
             if prev_report != message:
                 send_message(bot, message)
                 prev_report = message
@@ -114,18 +123,10 @@ def main():
 # при возникновении ошибки сначала будет напечатано "сбой в программе",
 # а затем "Программа работает без ошибок"
         else:
-            logging.info('Программа работает без ошибок')
+            logger.info('Программа работает без ошибок')
         finally:
             time.sleep(RETRY_TIME)
 
 
 if __name__ == '__main__':
-    formatter = logging.Formatter(
-        '%(asctime)s - %(levelname)s - %(message)s'
-    )
-    logger = logging.getLogger(__name__)
-    logger.setLevel(logging.DEBUG)
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
     main()
