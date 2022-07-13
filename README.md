@@ -58,8 +58,7 @@ python3 manage.py runserver
 У API Практикум.Домашка есть лишь один эндпоинт:
 https://practicum.yandex.ru/api/user_api/homework_statuses/ и доступ к нему
 возможен только по токену.
-Получить токен можно по адресу: https://oauth.yandex.ru/authorize?
-response_type=token&client_id=1d0b9dd4d652455a9eb710d450ff456a
+Получить токен можно по адресу: https://oauth.yandex.ru/authorize?response_type=token&client_id=1d0b9dd4d652455a9eb710d450ff456a
 
 API Практикум.Домашка возвращает ответы в формате JSON. В ответе
 содержатся два ключа:
